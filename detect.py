@@ -7,6 +7,7 @@
 import numpy as np
 import mss
 import cv2
+import matplotlib.pyplot as plt
 
 def remove_brd(img, mono_clr):
     ''' remove mono-color borders
@@ -23,7 +24,7 @@ def remove_brd(img, mono_clr):
         if np.any(img[i][cm] != mono_clr): vs = i; break
     for i in range(r-1, -1, -1):
         if np.any(img[i][cm] != mono_clr): vp = i; break
-    return img[vs:vp+1,hs:hp+1,:]
+    return img[vs:vp+1,hs:hp+1,:], hs, vs
 
 def detect_wnd():
     ''' detect game window, return status
@@ -33,9 +34,9 @@ def detect_wnd():
     monitor = {"top": 180, "left": 300, "width": 800, "height": 520}
     sct = mss.mss()
     img = np.array(sct.grab(monitor))
-    img = remove_brd(img, 255)
+    img, hs, vs = remove_brd(img, 255)
     assert img.shape == (500, 738, 4), 'Instruction: max https://www.miniclip.com/games/bloomin-gardens/en/ and run!'
-    #cv2.imwrite("capture.png", img)
+    # cv2.imwrite("capture.png", img)
 
     # projective transform to get a square board
     src = np.array([(143,106), (25,456), (591,106), (709,456)]) # lt, lb, rt, rb
@@ -43,30 +44,34 @@ def detect_wnd():
     H, _ = cv2.findHomography(src, dst)
     img_dst = cv2.warpPerspective(img, H, (804, 804))
     ptLT = (64,106); delta = 75
-    img_Hsv = cv2.cvtColor(img_dst, cv2.COLOR_BGR2HSV)
-    grid = np.zeros((9,9)); ddv, duv, dh = 10, 4, delta
+    img_Ycc = cv2.cvtColor(img_dst, cv2.COLOR_BGR2YCR_CB)
+    grid = np.zeros((9,9,2),dtype=np.float32)
+    ddv, duv, dlh, drh = 10, 10, delta//5, delta*4//5
     for i in range(9):
-        cv2.line(img_dst,(ptLT[0], ptLT[1]+i*delta), (ptLT[0]+9*delta, ptLT[1]+i*delta), (0,255,0), 2)
-        cv2.line(img_dst,(ptLT[0]+i*delta, ptLT[1]), (ptLT[0]+i*delta, ptLT[1]+9*delta), (0,255,0), 2)
-    #     for j in range(9):
-    #         dvs, dvp = ptLT[1]+i*delta-duv, ptLT[1]+i*delta+ddv
-    #         dhs, dhp = ptLT[0]+j*delta, ptLT[0]+j*delta+dh
-    #         grid[i][j] = np.mean(img_Hsv[dvs:dvp,dhs:dhp], axis=(0,1))[0]
-    #         cv2.imwrite(f"flower_{i}_{j}.png", img_dst[dvs:dvp,dhs:dhp])
-    # for rval in grid:
-    #     print([''.join(f'{x:06.2f}') for x in rval])
-    cv2.imwrite("square.png", img_dst)
+        # cv2.line(img_dst,(ptLT[0], ptLT[1]+i*delta), (ptLT[0]+9*delta, ptLT[1]+i*delta), (0,255,0), 2)
+        # cv2.line(img_dst,(ptLT[0]+i*delta, ptLT[1]), (ptLT[0]+i*delta, ptLT[1]+9*delta), (0,255,0), 2)
+        for j in range(9):
+            dvs, dvp = ptLT[1]+i*delta-duv, ptLT[1]+i*delta+ddv
+            dhs, dhp = ptLT[0]+j*delta+dlh, ptLT[0]+j*delta+drh
+            grid[i][j] = np.mean(img_Ycc[dvs:dvp,dhs:dhp,1:], axis=(0,1))
+            # cv2.imwrite(f"flower_{i}_{j}.png", img_dst[dvs:dvp,dhs:dhp])
+    # for rval in grid: print([f'{x[0]:05.1f},{x[1]:05.1f}' for x in rval]) # print mean numbers
+    cv2.imwrite("board.png", img_dst)
 
-
-    # gray1 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # sift = cv2.xfeatures2d.SIFT_create()
-    # kp_1, des_1 = sift.detectAndCompute(gray1, None)
-    # # Test code below
-    # img_sv = cv2.drawKeypoints(gray1, kp_1, img)
-    # cv2.imwrite('sift_keypoints.jpg', img_sv)
-    # cv2.imwrite("capture.png", img)
-
-    #board = [(143,106), (25,456), (591,124), (709,456)] # lt, lb, rt, rb
+    # classify region pixels to be 8 categories (7 flowers + 1 blank)        
+    # define criteria and apply kmeans()
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 1.0)
+    grid = grid.reshape((81,2))
+    ret,label,center=cv2.kmeans(grid, 8, None, criteria, 40, cv2.KMEANS_PP_CENTERS)
+    # # Now separate the data, Note the flatten()
+    # A = []
+    # for i in range(8): A.append(grid[label.ravel() == i])
+    # # Plot the data
+    # for i in range(8): plt.scatter(A[i][:,0],A[i][:,1])
+    # plt.scatter(center[:,0],center[:,1],s = 80,c = 'y', marker = 's')
+    # plt.xlabel('Height'),plt.ylabel('Weight')
+    # plt.show()
+    for i in range(9): print([x[0] for x in label[i*9:i*9+9]])
 
 if __name__ == '__main__':
     detect_wnd()
