@@ -63,6 +63,40 @@ def decode_flowers(grid):
     
     return values
 
+def get_contours(img_src):
+    grayImage = cv2.cvtColor(img_src, cv2.COLOR_BGR2GRAY)    
+    (thresh, blackAndWhiteImage) = cv2.threshold(grayImage, 200, 255, cv2.THRESH_BINARY)
+    _, contours, hierachy = cv2.findContours(blackAndWhiteImage, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    return contours
+
+def save_contour_img(contour, img, i):
+    mask = np.ones(img.shape[:2], dtype="uint8") * 255
+    # Draw the contours on the mask
+    cv2.drawContours(mask, contour, -1, 0, -1)
+    # remove the contours from the image and show the resulting images
+    img = cv2.bitwise_and(img, img, mask=mask)
+    cv2.imwrite(f"Mask{i}.png", mask)
+    #cv2.imwrite("After.png", img)
+
+def decode_score(img_score):
+    shapes = get_contours(img_score)
+    shapes = sorted(shapes, key=lambda x: x[0][0][0])
+    img_digits = cv2.imread("digits.png")
+    ref_shapes = get_contours(img_digits)
+    ref_shapes = sorted(ref_shapes, key=lambda x: x[0][0][0])
+    # for i, ss in enumerate(shapes): save_contour_img(ss, img_score, i)
+
+    score = 0
+    for i, s in enumerate(shapes[::-1]):
+        min_j, min_diff = 0, float('inf')
+        for j, ss in enumerate(ref_shapes):
+            ret = cv2.matchShapes(s, ss, 1, 0.0)
+            if ret < min_diff:
+                min_diff = ret; min_j = j
+        score += min_j * (10 ** i)
+    print(f"score={score}")
+    return score
+
 def detect_wnd():
     ''' detect game window, return status
     '''
@@ -75,9 +109,12 @@ def detect_wnd():
     assert img.shape == (500, 738, 3), 'Instruction: max https://www.miniclip.com/games/bloomin-gardens/en/ and run!'
     # cv2.imwrite("capture.png", img)
 
-    # get scores and next flowers from img
+    # get scores from img
     img_score = img[55:100,20:115]
     # cv2.imwrite("score.png", img_score)
+    score = decode_score(img_score)
+    
+    # get next flowers from img
     img_next = [img[70:98,666:714], img[136:164,666:714], img[202:230,666:714]]
     grid_next = np.zeros((3,1,2))
     for i, im in enumerate(img_next):
@@ -114,6 +151,8 @@ def detect_wnd():
 
     # classify next flowers
     nexts = decode_flowers(grid_next)
+
+    return score, values, nexts
 
 
 if __name__ == '__main__':
