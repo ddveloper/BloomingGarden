@@ -32,6 +32,8 @@ centers = np.zeros((8,2))
 
 def decode_flowers(grid):
     ''' decode board content/status by clustering images
+        flowers [0-pink, 1-green, 2-yellow, 3-empty, 4-blue
+                 5-purple, 6-white, 7-red]
     '''    
     global centers
     m, n, _ = grid.shape
@@ -97,6 +99,11 @@ def decode_score(img_score):
     print(f"score={score}")
     return score
 
+def replace_bg_color(img, bg_clr, new_clr):
+    dist = np.linalg.norm(img-bg_clr, axis=-1)
+    mask = np.where(dist < 20)
+    img[mask] = [26.2, 51.25, 75.1]
+
 def detect_wnd():
     ''' detect game window, return status
     '''
@@ -118,10 +125,9 @@ def detect_wnd():
     img_next = [img[70:98,666:714], img[136:164,666:714], img[202:230,666:714]]
     grid_next = np.zeros((3,1,2))
     for i, im in enumerate(img_next):
-        dist = np.linalg.norm(im-[28,87,20], axis=-1)
-        mask = np.where(dist < 20)
         # cv2.imwrite(f"next{i}.png", im)
-        im[mask] = [26.2, 51.25, 75.1]
+        replace_bg_color(im, [28,87,20], [26.2, 51.25, 75.1]) # bg green
+        replace_bg_color(im, [19,73,9], [26.2, 51.25, 75.1]) # bg stripe green
         # cv2.imwrite(f"next{i}_new.png", im)
         next_Ycc = cv2.cvtColor(im, cv2.COLOR_BGR2YCR_CB)
         grid_next[i][0] = np.mean(next_Ycc[:,:,1:], axis=(0,1))
