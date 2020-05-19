@@ -1,0 +1,2 @@
+from gym_bloomingGarden.envs.bloomingGarden_env import bloomingGardenEnv
+#from gym_bloomingGarden.envs.bloomingGarden_extrahard_env import bloomingGardenExtraHardEnv
