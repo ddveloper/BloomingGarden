@@ -1,0 +1,67 @@
+{
+  "url": "https://www.crazygames.com/game/blooming-garden",
+  "board_top_left": [
+    220,
+    130
+  ],
+  "cell_size": 54,
+  "next_slots": [
+    [
+      780,
+      165,
+      40,
+      40
+    ],
+    [
+      780,
+      225,
+      40,
+      40
+    ],
+    [
+      780,
+      285,
+      40,
+      40
+    ]
+  ],
+  "click_delay_s": 0.08,
+  "think_delay_s": 0.2,
+  "start_selectors": [
+    "button:has-text('Play')",
+    "button:has-text('Start')",
+    "button:has-text('Continue')",
+    ".css-47sehv",
+    "[aria-label='Play']"
+  ],
+  "wait_ms": 3000,
+  "show_click_overlay": true,
+  "overlay_duration_ms": 450,
+  "drag_move_steps": 12,
+  "drag_hover_ms": 250,
+  "confirm_target_click": true,
+  "preview_action_ms": 5000,
+  "board_quad": [
+    [
+      210,
+      180
+    ],
+    [
+      90,
+      665
+    ],
+    [
+      930,
+      180
+    ],
+    [
+      1085,
+      690
+    ]
+  ],
+  "board_warp_size": 900,
+  "show_cell_labels": true,
+  "debug_capture_steps": 3,
+  "debug_capture_dir": "results/debug_steps",
+  "debug_capture_full_page": false
+}
