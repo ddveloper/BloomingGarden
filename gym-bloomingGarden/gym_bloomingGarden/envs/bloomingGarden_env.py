@@ -11,7 +11,7 @@ class bloomingGardenEnv(gym.Env):
   def __init__(self):
     self.score = 0
     self.flowers = [0, 1, 2, 4, 5, 6, 7]
-    self.brd = np.full((9, 9), 3, dtype=np.int)
+    self.brd = np.full((9, 9), 3, dtype=int)
     self.coming = [3, 3, 3]
     self.reset()
     self.action_space = spaces.Tuple((spaces.Discrete(9), spaces.Discrete(9), spaces.Discrete(9), spaces.Discrete(9)))
@@ -92,7 +92,7 @@ class bloomingGardenEnv(gym.Env):
         return board status & coming flowers
     '''
     self.score = 0
-    self.brd = np.full((9, 9), 3, dtype=np.int)
+    self.brd = np.full((9, 9), 3, dtype=int)
     for i in range(3): # init 3 flowers
       position = np.random.randint(0, 81)
       flower = np.random.choice(self.flowers)
