@@ -33,7 +33,6 @@ class BotConfig:
     drag_move_steps: int
     drag_hover_ms: int
     confirm_target_click: bool
-    start_after_clicks: int
     preview_action_ms: int
     start_selectors: List[str]
 
@@ -53,7 +52,6 @@ class BotConfig:
             drag_move_steps=int(raw.get("drag_move_steps", 12)),
             drag_hover_ms=int(raw.get("drag_hover_ms", 250)),
             confirm_target_click=bool(raw.get("confirm_target_click", True)),
-            start_after_clicks=int(raw.get("start_after_clicks", 3)),
             preview_action_ms=int(raw.get("preview_action_ms", 5000)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
@@ -98,13 +96,11 @@ class CrazyGamesBot:
         self.config = config
         self.detector = CrazyGamesBoardDetector(config, centers_path)
         self.planner = HighScorePlanner(planner_cfg)
-        self.manual_click_count = 0
 
     def run(self, steps: int = 500, headless: bool = False) -> None:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
-            self._install_click_logger(page)
             page.goto(self.config.url, wait_until="domcontentloaded")
             page.wait_for_timeout(self.config.wait_ms)
 
@@ -113,11 +109,10 @@ class CrazyGamesBot:
 
             print(
                 f"ready: steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} "
-                f"samples={self.planner.cfg.placement_samples} start_after_clicks={self.config.start_after_clicks}"
+                f"samples={self.planner.cfg.placement_samples}"
             )
 
-            if self.config.start_after_clicks > 0:
-                self._wait_for_manual_clicks(page, self.config.start_after_clicks)
+            self._wait_for_user_confirmation()
 
             for step in range(steps):
                 clip = self._frame_clip(page, frame)
@@ -141,41 +136,14 @@ class CrazyGamesBot:
 
             browser.close()
 
-    def _install_click_logger(self, page: Page) -> None:
-        def on_click(source, payload):
-            self.manual_click_count += 1
-            frame_url = ""
-            try:
-                frame_url = source["frame"].url
-            except Exception:
-                pass
-            print(
-                f"manual-click#{self.manual_click_count} x={payload.get('x')} y={payload.get('y')} "
-                f"tag={payload.get('tag')} frame={frame_url[:80]}"
-            )
-
-        page.expose_binding("__codex_report_click", on_click)
-        page.add_init_script(
-            """
-            () => {
-                if (window.__codex_click_hooked) return;
-                window.__codex_click_hooked = true;
-                document.addEventListener('click', (e) => {
-                    const t = e.target;
-                    const tag = t && t.tagName ? t.tagName.toLowerCase() : '';
-                    if (window.__codex_report_click) {
-                        window.__codex_report_click({x:e.clientX,y:e.clientY,tag});
-                    }
-                }, true);
-            }
-            """
-        )
-
-    def _wait_for_manual_clicks(self, page: Page, needed: int) -> None:
-        print(f"waiting for manual clicks before bot starts: need={needed}")
-        while self.manual_click_count < needed:
-            page.wait_for_timeout(200)
-        print(f"manual click threshold reached ({self.manual_click_count}/{needed}), starting bot loop")
+    def _wait_for_user_confirmation(self) -> None:
+        """Block until user types `y` in CLI to start the bot loop."""
+        while True:
+            ans = input("Type y then Enter to start bot actions: ").strip().lower()
+            if ans == "y":
+                print("received y, starting bot loop")
+                return
+            print("not started. please type y to start.")
 
     def _decide_action(self, env_like) -> Tuple[Tuple[int, int, int, int], dict]:
         actions = self.planner._legal_actions(env_like.brd)
@@ -408,7 +376,6 @@ def main() -> None:
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--samples", type=int, default=4)
     parser.add_argument("--wait-ms", type=int, default=None, help="initial warmup wait before click-gated start")
-    parser.add_argument("--start-after-clicks", type=int, default=None, help="wait for N user clicks before bot starts")
     parser.add_argument("--preview-action-ms", type=int, default=None, help="keep board/action debug overlay before acting")
     parser.add_argument("--hide-click-overlay", action="store_true")
     parser.add_argument("--overlay-duration-ms", type=int, default=None)
@@ -420,8 +387,6 @@ def main() -> None:
     cfg = BotConfig.load(Path(args.config))
     if args.wait_ms is not None:
         cfg.wait_ms = args.wait_ms
-    if args.start_after_clicks is not None:
-        cfg.start_after_clicks = args.start_after_clicks
     if args.preview_action_ms is not None:
         cfg.preview_action_ms = args.preview_action_ms
     if args.hide_click_overlay:
