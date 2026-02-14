@@ -1,4 +1,4 @@
-"""Play Blooming Garden on CrazyGames using the local planner with visual debug overlays."""
+"""Play Blooming Garden on CrazyGames using the local planner with perspective-aware debug overlays."""
 
 from __future__ import annotations
 
@@ -22,8 +22,9 @@ EMPTY = 3
 @dataclass
 class BotConfig:
     url: str
-    board_top_left: Tuple[int, int]
-    cell_size: int
+    board_quad: List[Tuple[float, float]]  # lt, lb, rt, rb in frame-local coordinates
+    board_top_left: Tuple[int, int]  # legacy fallback
+    cell_size: int  # legacy fallback
     next_slots: List[Tuple[int, int, int, int]]
     click_delay_s: float
     think_delay_s: float
@@ -34,15 +35,24 @@ class BotConfig:
     drag_hover_ms: int
     confirm_target_click: bool
     preview_action_ms: int
+    board_warp_size: int
     start_selectors: List[str]
 
     @staticmethod
     def load(path: Path) -> "BotConfig":
         raw = json.loads(path.read_text())
+        board_top_left = tuple(raw.get("board_top_left", [220, 130]))
+        cell_size = int(raw.get("cell_size", 54))
+        board_quad = raw.get("board_quad")
+        if not board_quad:
+            x0, y0 = board_top_left
+            s = cell_size * 9
+            board_quad = [[x0, y0], [x0, y0 + s], [x0 + s, y0], [x0 + s, y0 + s]]
         return BotConfig(
             url=raw["url"],
-            board_top_left=tuple(raw["board_top_left"]),
-            cell_size=int(raw["cell_size"]),
+            board_quad=[tuple(x) for x in board_quad],
+            board_top_left=board_top_left,
+            cell_size=cell_size,
             next_slots=[tuple(x) for x in raw["next_slots"]],
             click_delay_s=float(raw.get("click_delay_s", 0.08)),
             think_delay_s=float(raw.get("think_delay_s", 0.2)),
@@ -53,32 +63,74 @@ class BotConfig:
             drag_hover_ms=int(raw.get("drag_hover_ms", 250)),
             confirm_target_click=bool(raw.get("confirm_target_click", True)),
             preview_action_ms=int(raw.get("preview_action_ms", 5000)),
+            board_warp_size=int(raw.get("board_warp_size", 900)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
+
+
+class PerspectiveBoardMapper:
+    def __init__(self, cfg: BotConfig):
+        self.cfg = cfg
+        self.src = np.array(cfg.board_quad, dtype=np.float32)
+        s = float(cfg.board_warp_size - 1)
+        self.dst = np.array([(0, 0), (0, s), (s, 0), (s, s)], dtype=np.float32)
+        self.h = cv2.getPerspectiveTransform(self.src, self.dst)  # frame -> canonical
+        self.h_inv = cv2.getPerspectiveTransform(self.dst, self.src)  # canonical -> frame
+        self.cell = cfg.board_warp_size / 9.0
+
+    def warp(self, frame_bgr: np.ndarray) -> np.ndarray:
+        return cv2.warpPerspective(frame_bgr, self.h, (self.cfg.board_warp_size, self.cfg.board_warp_size))
+
+    def board_cell_center_frame(self, r: int, c: int) -> Tuple[float, float]:
+        pt = np.array([[[((c + 0.5) * self.cell), ((r + 0.5) * self.cell)]]], dtype=np.float32)
+        out = cv2.perspectiveTransform(pt, self.h_inv)[0, 0]
+        return float(out[0]), float(out[1])
+
+    def grid_segments_frame(self) -> List[Tuple[float, float, float, float]]:
+        segs: List[Tuple[float, float, float, float]] = []
+        board_max = float(self.cfg.board_warp_size - 1)
+        for i in range(10):
+            x = i * self.cell
+            p0 = cv2.perspectiveTransform(np.array([[[x, 0.0]]], dtype=np.float32), self.h_inv)[0, 0]
+            p1 = cv2.perspectiveTransform(np.array([[[x, board_max]]], dtype=np.float32), self.h_inv)[0, 0]
+            segs.append((float(p0[0]), float(p0[1]), float(p1[0]), float(p1[1])))
+
+            y = i * self.cell
+            q0 = cv2.perspectiveTransform(np.array([[[0.0, y]]], dtype=np.float32), self.h_inv)[0, 0]
+            q1 = cv2.perspectiveTransform(np.array([[[board_max, y]]], dtype=np.float32), self.h_inv)[0, 0]
+            segs.append((float(q0[0]), float(q0[1]), float(q1[0]), float(q1[1])))
+        return segs
+
+    def border_points_frame(self) -> List[Tuple[float, float]]:
+        return [(float(x), float(y)) for x, y in self.src.tolist()]
 
 
 class CrazyGamesBoardDetector:
     def __init__(self, cfg: BotConfig, centers_file: Path):
         self.cfg = cfg
+        self.mapper = PerspectiveBoardMapper(cfg)
         self.centers = np.loadtxt(centers_file, dtype=np.float32)
         if self.centers.shape != (8, 2):
             raise ValueError("centers.txt should contain 8x2 cluster centers")
 
-    def detect(self, image_bgr: np.ndarray) -> Tuple[np.ndarray, List[int]]:
+    def detect(self, frame_bgr: np.ndarray) -> Tuple[np.ndarray, List[int]]:
         board = np.full((9, 9), EMPTY, dtype=int)
-        ycc = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2YCR_CB)
-        x0, y0 = self.cfg.board_top_left
-        step = self.cfg.cell_size
+
+        warped = self.mapper.warp(frame_bgr)
+        ycc_warp = cv2.cvtColor(warped, cv2.COLOR_BGR2YCR_CB)
+        cell = self.mapper.cell
+        patch_r = max(3, int(cell * 0.08))
 
         for r in range(9):
             for c in range(9):
-                cx = x0 + c * step + step // 2
-                cy = y0 + r * step + step // 2
-                patch = ycc[max(0, cy - 5) : cy + 5, max(0, cx - 5) : cx + 5, 1:]
+                cx = int((c + 0.5) * cell)
+                cy = int((r + 0.5) * cell)
+                patch = ycc_warp[max(0, cy - patch_r) : cy + patch_r, max(0, cx - patch_r) : cx + patch_r, 1:]
                 feat = np.mean(patch, axis=(0, 1))
                 board[r][c] = self._nearest_flower(feat)
 
         next_flowers: List[int] = []
+        ycc = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YCR_CB)
         for x, y, w, h in self.cfg.next_slots:
             patch = ycc[y : y + h, x : x + w, 1:]
             feat = np.mean(patch, axis=(0, 1))
@@ -137,7 +189,6 @@ class CrazyGamesBot:
             browser.close()
 
     def _wait_for_user_confirmation(self) -> None:
-        """Block until user types `y` in CLI to start the bot loop."""
         while True:
             ans = input("Type y then Enter to start bot actions: ").strip().lower()
             if ans == "y":
@@ -156,19 +207,13 @@ class CrazyGamesBot:
         )
         top = scored[:3]
         action = self.planner.choose_action(env_like)
-        return action, {
-            "action_count": len(actions),
-            "top_candidates": [(float(score), a) for score, a in top],
-        }
+        return action, {"action_count": len(actions), "top_candidates": [(float(score), a) for score, a in top]}
 
     def _log_decision(self, step: int, board: np.ndarray, coming: List[int], action: Tuple[int, int, int, int], decision: dict) -> None:
         empty = int(np.count_nonzero(board == EMPTY))
         top_parts = [f"{act}:{score:.1f}" for score, act in decision.get("top_candidates", [])]
         top_txt = " | ".join(top_parts) if top_parts else "n/a"
-        print(
-            f"step={step} empty={empty} coming={coming} actions={decision.get('action_count',0)} "
-            f"chosen={action} top3={top_txt}"
-        )
+        print(f"step={step} empty={empty} coming={coming} actions={decision.get('action_count',0)} chosen={action} top3={top_txt}")
 
     def _resolve_game_frame(self, page: Page) -> Frame:
         page.wait_for_timeout(4000)
@@ -190,8 +235,7 @@ class CrazyGamesBot:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             try:
-                element = frame.frame_element()
-                box = element.bounding_box()
+                box = frame.frame_element().bounding_box()
                 if box and box["width"] > 0 and box["height"] > 0:
                     return {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}
             except Exception:
@@ -226,102 +270,77 @@ class CrazyGamesBot:
 
     def _draw_board_debug(self, page: Page, clip: dict, action: Tuple[int, int, int, int]) -> None:
         sr, sc, tr, tc = action
-        x0, y0 = self.config.board_top_left
-        step = self.config.cell_size
-        bx, by = clip["x"] + x0, clip["y"] + y0
-        board_px = step * 9
-        sx, sy = bx + sc * step + step // 2, by + sr * step + step // 2
-        tx, ty = bx + tc * step + step // 2, by + tr * step + step // 2
+        mapper = self.detector.mapper
+        border = [(clip["x"] + x, clip["y"] + y) for x, y in mapper.border_points_frame()]
+        segs = [
+            (clip["x"] + x1, clip["y"] + y1, clip["x"] + x2, clip["y"] + y2)
+            for x1, y1, x2, y2 in mapper.grid_segments_frame()
+        ]
+        sx, sy = mapper.board_cell_center_frame(sr, sc)
+        tx, ty = mapper.board_cell_center_frame(tr, tc)
+        sx += clip["x"]; sy += clip["y"]
+        tx += clip["x"]; ty += clip["y"]
 
         page.evaluate(
-            """([bx,by,boardPx,step,sx,sy,tx,ty,duration]) => {
+            """([border,segs,sx,sy,tx,ty,duration]) => {
                 const id = 'codex-board-debug';
                 const old = document.getElementById(id);
                 if (old) old.remove();
-                const root = document.createElement('div');
-                root.id = id;
-                root.style.position = 'fixed';
-                root.style.left = '0';
-                root.style.top = '0';
-                root.style.width = '100vw';
-                root.style.height = '100vh';
-                root.style.pointerEvents = 'none';
-                root.style.zIndex = '2147483646';
 
-                const border = document.createElement('div');
-                border.style.position = 'fixed';
-                border.style.left = `${bx}px`;
-                border.style.top = `${by}px`;
-                border.style.width = `${boardPx}px`;
-                border.style.height = `${boardPx}px`;
-                border.style.border = '3px solid red';
-                border.style.boxSizing = 'border-box';
-                root.appendChild(border);
+                const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+                svg.id = id;
+                svg.setAttribute('width', window.innerWidth);
+                svg.setAttribute('height', window.innerHeight);
+                svg.style.position = 'fixed';
+                svg.style.left = '0';
+                svg.style.top = '0';
+                svg.style.pointerEvents = 'none';
+                svg.style.zIndex = '2147483646';
 
-                for (let i=1;i<9;i++) {
-                    const v = document.createElement('div');
-                    v.style.position = 'fixed';
-                    v.style.left = `${bx + i*step}px`;
-                    v.style.top = `${by}px`;
-                    v.style.width = '1px';
-                    v.style.height = `${boardPx}px`;
-                    v.style.background = 'rgba(255,0,0,0.5)';
-                    root.appendChild(v);
+                const poly = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+                poly.setAttribute('points', border.map(p => `${p[0]},${p[1]}`).join(' '));
+                poly.setAttribute('fill', 'none');
+                poly.setAttribute('stroke', 'red');
+                poly.setAttribute('stroke-width', '3');
+                svg.appendChild(poly);
 
-                    const h = document.createElement('div');
-                    h.style.position = 'fixed';
-                    h.style.left = `${bx}px`;
-                    h.style.top = `${by + i*step}px`;
-                    h.style.width = `${boardPx}px`;
-                    h.style.height = '1px';
-                    h.style.background = 'rgba(255,0,0,0.5)';
-                    root.appendChild(h);
+                for (const s of segs) {
+                    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+                    line.setAttribute('x1', s[0]); line.setAttribute('y1', s[1]);
+                    line.setAttribute('x2', s[2]); line.setAttribute('y2', s[3]);
+                    line.setAttribute('stroke', 'rgba(255,0,0,0.55)');
+                    line.setAttribute('stroke-width', '1');
+                    svg.appendChild(line);
                 }
 
                 const mk = (x,y,color,label) => {
-                    const c = document.createElement('div');
-                    c.style.position='fixed';
-                    c.style.left = `${x-14}px`;
-                    c.style.top = `${y-14}px`;
-                    c.style.width='28px';
-                    c.style.height='28px';
-                    c.style.border=`4px solid ${color}`;
-                    c.style.borderRadius='50%';
-                    c.style.boxShadow=`0 0 12px ${color}`;
-                    c.style.background='rgba(255,255,255,0.18)';
-                    root.appendChild(c);
+                    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+                    c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 14);
+                    c.setAttribute('fill', 'rgba(255,255,255,0.18)');
+                    c.setAttribute('stroke', color); c.setAttribute('stroke-width', 4);
+                    svg.appendChild(c);
 
-                    const t = document.createElement('div');
+                    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+                    t.setAttribute('x', x + 18); t.setAttribute('y', y + 4);
+                    t.setAttribute('fill', color); t.setAttribute('font-size', 14); t.setAttribute('font-weight', 'bold');
                     t.textContent = label;
-                    t.style.position='fixed';
-                    t.style.left = `${x+16}px`;
-                    t.style.top = `${y-10}px`;
-                    t.style.color = color;
-                    t.style.font='bold 14px sans-serif';
-                    t.style.textShadow='0 0 3px black';
-                    root.appendChild(t);
+                    svg.appendChild(t);
                 };
-
                 mk(sx,sy,'red','SRC');
                 mk(tx,ty,'yellow','DST');
 
-                document.body.appendChild(root);
+                document.body.appendChild(svg);
                 setTimeout(() => { const cur = document.getElementById(id); if (cur) cur.remove(); }, duration);
             }
             """,
-            [bx, by, board_px, step, sx, sy, tx, ty, self.config.preview_action_ms],
+            [border, segs, sx, sy, tx, ty, self.config.preview_action_ms],
         )
 
     def _play_action(self, page: Page, clip: dict, action: Tuple[int, int, int, int]) -> None:
         sr, sc, tr, tc = action
-        x0, y0 = self.config.board_top_left
-        step = self.config.cell_size
-
-        sx = x0 + sc * step + step // 2
-        sy = y0 + sr * step + step // 2
-        tx = x0 + tc * step + step // 2
-        ty = y0 + tr * step + step // 2
-
+        mapper = self.detector.mapper
+        sx, sy = mapper.board_cell_center_frame(sr, sc)
+        tx, ty = mapper.board_cell_center_frame(tr, tc)
         abs_sx, abs_sy = clip["x"] + sx, clip["y"] + sy
         abs_tx, abs_ty = clip["x"] + tx, clip["y"] + ty
 
@@ -375,7 +394,7 @@ def main() -> None:
     parser.add_argument("--beam-width", type=int, default=10)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--samples", type=int, default=4)
-    parser.add_argument("--wait-ms", type=int, default=None, help="initial warmup wait before click-gated start")
+    parser.add_argument("--wait-ms", type=int, default=None, help="initial warmup wait before CLI-start prompt")
     parser.add_argument("--preview-action-ms", type=int, default=None, help="keep board/action debug overlay before acting")
     parser.add_argument("--hide-click-overlay", action="store_true")
     parser.add_argument("--overlay-duration-ms", type=int, default=None)

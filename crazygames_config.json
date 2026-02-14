@@ -40,5 +40,24 @@
   "drag_move_steps": 12,
   "drag_hover_ms": 250,
   "confirm_target_click": true,
-  "preview_action_ms": 5000
+  "preview_action_ms": 5000,
+  "board_quad": [
+    [
+      210,
+      180
+    ],
+    [
+      90,
+      665
+    ],
+    [
+      930,
+      180
+    ],
+    [
+      1085,
+      690
+    ]
+  ],
+  "board_warp_size": 900
 }

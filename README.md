@@ -55,6 +55,8 @@ Notes:
 - Runtime highlights bot clicks on-screen (green = source, red = destination) so interactions are visually traceable.
 - Flower movement now follows a 3 sub-step interaction model: click source -> move cursor to target -> click (optionally confirm click) at target.
 - Before each move, bot draws board border debug lines (red) and planned source/destination markers (red/yellow) for visibility.
+- Board mapping is perspective-aware via `board_quad` (lt, lb, rt, rb) in `crazygames_config.json`; tune these 4 points to match trapezoid board corners.
+- Overlay and click targets are now projected from homography (not flat `cell_size` grid), so far-side/near-side distortion is handled.
 
 
 Troubleshooting:
