@@ -39,5 +39,7 @@
   "overlay_duration_ms": 450,
   "drag_move_steps": 12,
   "drag_hover_ms": 250,
-  "confirm_target_click": true
+  "confirm_target_click": true,
+  "start_after_clicks": 3,
+  "preview_action_ms": 5000
 }
