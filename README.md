@@ -35,7 +35,7 @@ This gives a much better starting point for reaching high scores and generating 
 You can now run a browser bot against the new host:
 
 ```bash
-python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4
+python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4 --wait-ms 60000
 ```
 
 Recommended setup flow:
@@ -50,6 +50,7 @@ Recommended setup flow:
 Notes:
 - The game runs in an iframe/canvas and UI layout may change; coordinate calibration is expected.
 - The bot uses `baseline_agent.py` planner directly for decision making.
+- Runtime now prints decision logs per step (empty cells, coming flowers, action count, chosen move, top-3 scored candidates).
 
 
 Troubleshooting:

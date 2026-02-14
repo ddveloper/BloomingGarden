@@ -1,11 +1,29 @@
 {
   "url": "https://www.crazygames.com/game/blooming-garden",
-  "board_top_left": [220, 130],
+  "board_top_left": [
+    220,
+    130
+  ],
   "cell_size": 54,
   "next_slots": [
-    [780, 165, 40, 40],
-    [780, 225, 40, 40],
-    [780, 285, 40, 40]
+    [
+      780,
+      165,
+      40,
+      40
+    ],
+    [
+      780,
+      225,
+      40,
+      40
+    ],
+    [
+      780,
+      285,
+      40,
+      40
+    ]
   ],
   "click_delay_s": 0.08,
   "think_delay_s": 0.2,
@@ -15,5 +33,6 @@
     "button:has-text('Continue')",
     ".css-47sehv",
     "[aria-label='Play']"
-  ]
+  ],
+  "wait_ms": 3000
 }

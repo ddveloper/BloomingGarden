@@ -37,6 +37,7 @@ class BotConfig:
     next_slots: List[Tuple[int, int, int, int]]
     click_delay_s: float
     think_delay_s: float
+    wait_ms: int
     start_selectors: List[str]
 
     @staticmethod
@@ -49,6 +50,7 @@ class BotConfig:
             next_slots=[tuple(x) for x in raw["next_slots"]],
             click_delay_s=float(raw.get("click_delay_s", 0.08)),
             think_delay_s=float(raw.get("think_delay_s", 0.2)),
+            wait_ms=int(raw.get("wait_ms", 3000)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
 
@@ -98,10 +100,12 @@ class CrazyGamesBot:
             browser = p.chromium.launch(headless=headless)
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
             page.goto(self.config.url, wait_until="domcontentloaded")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(self.config.wait_ms)
 
             frame = self._resolve_game_frame(page)
             self._click_start_buttons(page, frame)
+
+            print(f"ready: wait_ms={self.config.wait_ms} steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} samples={self.planner.cfg.placement_samples}")
 
             for step in range(steps):
                 clip = self._frame_clip(page, frame)
@@ -113,12 +117,40 @@ class CrazyGamesBot:
                     continue
                 board, coming = self._capture_state(page, clip)
                 env_like = SimpleNamespace(brd=board, coming=coming, score=0)
-                action = self.planner.choose_action(env_like)
+                action, decision = self._decide_action(env_like)
                 self._play_action(page, clip, action)
-                print(f"step={step} action={action}")
+                self._log_decision(step, board, coming, action, decision)
                 time.sleep(self.config.think_delay_s)
 
             browser.close()
+
+    def _decide_action(self, env_like) -> Tuple[Tuple[int, int, int, int], dict]:
+        """Return selected action plus debugging details for top candidates."""
+        actions = self.planner._legal_actions(env_like.brd)
+        if not actions:
+            return (0, 0, 0, 1), {"top_candidates": [], "action_count": 0}
+
+        scored = sorted(
+            ((self.planner._quick_action_score(env_like.brd, action), action) for action in actions),
+            reverse=True,
+        )
+        top = scored[:3]
+        action = self.planner.choose_action(env_like)
+        return action, {
+            "action_count": len(actions),
+            "top_candidates": [(float(score), a) for score, a in top],
+        }
+
+    def _log_decision(self, step: int, board: np.ndarray, coming: List[int], action: Tuple[int, int, int, int], decision: dict) -> None:
+        empty = int(np.count_nonzero(board == EMPTY))
+        top_parts = []
+        for score, act in decision.get("top_candidates", []):
+            top_parts.append(f"{act}:{score:.1f}")
+        top_txt = " | ".join(top_parts) if top_parts else "n/a"
+        print(
+            f"step={step} empty={empty} coming={coming} actions={decision.get('action_count',0)} "
+            f"chosen={action} top3={top_txt}"
+        )
 
     def _resolve_game_frame(self, page: Page) -> Frame:
         page.wait_for_timeout(4000)
@@ -201,9 +233,12 @@ def main() -> None:
     parser.add_argument("--beam-width", type=int, default=10)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--samples", type=int, default=4)
+    parser.add_argument("--wait-ms", type=int, default=None, help="extra wait before first capture for manual Play click")
     args = parser.parse_args()
 
     cfg = BotConfig.load(Path(args.config))
+    if args.wait_ms is not None:
+        cfg.wait_ms = args.wait_ms
     planner_cfg = PlannerConfig(
         beam_width=args.beam_width,
         lookahead_depth=args.depth,
