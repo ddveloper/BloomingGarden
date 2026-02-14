@@ -35,7 +35,7 @@ This gives a much better starting point for reaching high scores and generating 
 You can now run a browser bot against the new host:
 
 ```bash
-python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4 --wait-ms 60000
+python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4 --wait-ms 60000 --overlay-duration-ms 600
 ```
 
 Recommended setup flow:
@@ -51,6 +51,7 @@ Notes:
 - The game runs in an iframe/canvas and UI layout may change; coordinate calibration is expected.
 - The bot uses `baseline_agent.py` planner directly for decision making.
 - Runtime now prints decision logs per step (empty cells, coming flowers, action count, chosen move, top-3 scored candidates).
+- Runtime highlights bot clicks on-screen (green = source, red = destination) so interactions are visually traceable.
 
 
 Troubleshooting:
@@ -58,3 +59,8 @@ Troubleshooting:
 - On Windows, if `playwright` command is not found, run `python -m playwright install chromium` instead.
 
 - If calibration cannot resolve iframe bounds (ads/overlay/frame recreation), it now saves a full-page fallback screenshot instead of crashing.
+
+Example without visual markers:
+```bash
+python3 web_bot_crazygames.py --steps 500 --wait-ms 60000 --hide-click-overlay
+```

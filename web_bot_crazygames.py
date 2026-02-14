@@ -38,6 +38,8 @@ class BotConfig:
     click_delay_s: float
     think_delay_s: float
     wait_ms: int
+    show_click_overlay: bool
+    overlay_duration_ms: int
     start_selectors: List[str]
 
     @staticmethod
@@ -51,6 +53,8 @@ class BotConfig:
             click_delay_s=float(raw.get("click_delay_s", 0.08)),
             think_delay_s=float(raw.get("think_delay_s", 0.2)),
             wait_ms=int(raw.get("wait_ms", 3000)),
+            show_click_overlay=bool(raw.get("show_click_overlay", True)),
+            overlay_duration_ms=int(raw.get("overlay_duration_ms", 450)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
 
@@ -219,9 +223,37 @@ class CrazyGamesBot:
         abs_sx, abs_sy = clip["x"] + sx, clip["y"] + sy
         abs_tx, abs_ty = clip["x"] + tx, clip["y"] + ty
 
+        self._visualize_click(page, abs_sx, abs_sy, "#33cc33")
         page.mouse.click(abs_sx, abs_sy)
         time.sleep(self.config.click_delay_s)
+        self._visualize_click(page, abs_tx, abs_ty, "#ff4444")
         page.mouse.click(abs_tx, abs_ty)
+
+    def _visualize_click(self, page: Page, x: float, y: float, color: str) -> None:
+        if not self.config.show_click_overlay:
+            return
+        duration = self.config.overlay_duration_ms
+        page.evaluate(
+            """([x,y,color,duration]) => {
+                const dot = document.createElement('div');
+                dot.style.position = 'fixed';
+                dot.style.left = `${x - 10}px`;
+                dot.style.top = `${y - 10}px`;
+                dot.style.width = '20px';
+                dot.style.height = '20px';
+                dot.style.border = `3px solid ${color}`;
+                dot.style.borderRadius = '50%';
+                dot.style.background = 'rgba(255,255,255,0.15)';
+                dot.style.zIndex = '2147483647';
+                dot.style.pointerEvents = 'none';
+                dot.style.boxShadow = `0 0 10px ${color}`;
+                document.body.appendChild(dot);
+                setTimeout(() => dot.remove(), duration);
+            }
+            """,
+            [x, y, color, duration],
+        )
+
 
 
 def main() -> None:
@@ -234,11 +266,17 @@ def main() -> None:
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--samples", type=int, default=4)
     parser.add_argument("--wait-ms", type=int, default=None, help="extra wait before first capture for manual Play click")
+    parser.add_argument("--hide-click-overlay", action="store_true", help="disable on-screen click highlight")
+    parser.add_argument("--overlay-duration-ms", type=int, default=None, help="highlight duration for each click marker")
     args = parser.parse_args()
 
     cfg = BotConfig.load(Path(args.config))
     if args.wait_ms is not None:
         cfg.wait_ms = args.wait_ms
+    if args.hide_click_overlay:
+        cfg.show_click_overlay = False
+    if args.overlay_duration_ms is not None:
+        cfg.overlay_duration_ms = args.overlay_duration_ms
     planner_cfg = PlannerConfig(
         beam_width=args.beam_width,
         lookahead_depth=args.depth,

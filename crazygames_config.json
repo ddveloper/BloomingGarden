@@ -34,5 +34,7 @@
     ".css-47sehv",
     "[aria-label='Play']"
   ],
-  "wait_ms": 3000
+  "wait_ms": 3000,
+  "show_click_overlay": true,
+  "overlay_duration_ms": 450
 }
