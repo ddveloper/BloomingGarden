@@ -29,3 +29,24 @@ This gives a much better starting point for reaching high scores and generating 
 - Train a policy/value network on those trajectories, then fine-tune with RL.
 - Evaluate with fixed seeds and track: min / median / avg / max across episodes.
 - Promote models only when median crosses your target threshold (e.g. 3000+).
+
+
+### CrazyGames bot integration
+You can now run a browser bot against the new host:
+
+```bash
+python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4
+```
+
+Recommended setup flow:
+1. Install deps: `pip install -r requirements.txt` and `playwright install chromium`.
+2. Capture a fresh game-frame screenshot for calibration:
+   ```bash
+   python3 calibrate_crazygames.py --out results/crazygames_frame.png
+   ```
+3. Update `crazygames_config.json` with accurate board/next-flower coordinates for your screen layout.
+4. Start the page and let the bot take over.
+
+Notes:
+- The game runs in an iframe/canvas and UI layout may change; coordinate calibration is expected.
+- The bot uses `baseline_agent.py` planner directly for decision making.
