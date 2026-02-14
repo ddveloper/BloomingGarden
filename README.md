@@ -103,3 +103,17 @@ Debug screenshot options:
 ```bash
 python3 web_bot_crazygames.py --debug-capture-steps 3 --debug-capture-dir results/debug_steps
 ```
+
+
+Interactive `board_quad` tuning (keyboard from terminal):
+```bash
+python3 calibrate_crazygames.py --interactive-quad --wait-ms 60000 --config crazygames_config.json
+```
+
+Inside tuner:
+- select corner: `1/2/3/4` or `lt/lb/rt/rb`
+- move selected corner: `w/a/s/d`
+- change move step: `+` / `-`
+- preview marker for 2s: `show` (or press Enter)
+- persist changes: `save`
+- exit: `q`
