@@ -104,10 +104,17 @@ class CrazyGamesBot:
             self._click_start_buttons(page, frame)
 
             for step in range(steps):
-                board, coming = self._capture_state(page, frame)
+                clip = self._frame_clip(page, frame)
+                if clip is None:
+                    # game iframe is often recreated after ads/consent overlays
+                    frame = self._resolve_game_frame(page)
+                    page.wait_for_timeout(300)
+                    print(f"step={step} waiting for stable iframe clip")
+                    continue
+                board, coming = self._capture_state(page, clip)
                 env_like = SimpleNamespace(brd=board, coming=coming, score=0)
                 action = self.planner.choose_action(env_like)
-                self._play_action(page, frame, action)
+                self._play_action(page, clip, action)
                 print(f"step={step} action={action}")
                 time.sleep(self.config.think_delay_s)
 
@@ -125,22 +132,22 @@ class CrazyGamesBot:
             raise RuntimeError("No game frame detected. Open devtools and update frame logic.")
         return candidates[-1]
 
-    def _frame_clip(self, page: Page, frame: Frame) -> dict:
+    def _frame_clip(self, page: Page, frame: Frame, timeout_s: float = 2.0) -> dict | None:
         if frame == page.main_frame:
             vp = page.viewport_size or {"width": 1600, "height": 1000}
             return {"x": 0, "y": 0, "width": vp["width"], "height": vp["height"]}
 
-        element = frame.frame_element()
-        box = element.bounding_box()
-        if box is None:
-            raise RuntimeError("Could not resolve iframe bounding box")
-
-        return {
-            "x": box["x"],
-            "y": box["y"],
-            "width": box["width"],
-            "height": box["height"],
-        }
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                element = frame.frame_element()
+                box = element.bounding_box()
+                if box and box["width"] > 0 and box["height"] > 0:
+                    return {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}
+            except Exception:
+                pass
+            page.wait_for_timeout(100)
+        return None
 
     def _click_start_buttons(self, page: Page, frame: Frame) -> None:
         for selector in self.config.start_selectors:
@@ -160,15 +167,14 @@ class CrazyGamesBot:
             except Exception:
                 pass
 
-    def _capture_state(self, page: Page, frame: Frame) -> Tuple[np.ndarray, List[int]]:
-        clip = self._frame_clip(page, frame)
+    def _capture_state(self, page: Page, clip: dict) -> Tuple[np.ndarray, List[int]]:
         png = page.screenshot(type="png", clip=clip)
         img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             raise RuntimeError("Failed to decode frame screenshot")
         return self.detector.detect(img)
 
-    def _play_action(self, page: Page, frame: Frame, action: Tuple[int, int, int, int]) -> None:
+    def _play_action(self, page: Page, clip: dict, action: Tuple[int, int, int, int]) -> None:
         sr, sc, tr, tc = action
         x0, y0 = self.config.board_top_left
         step = self.config.cell_size
@@ -178,7 +184,6 @@ class CrazyGamesBot:
         tx = x0 + tc * step + step // 2
         ty = y0 + tr * step + step // 2
 
-        clip = self._frame_clip(page, frame)
         abs_sx, abs_sy = clip["x"] + sx, clip["y"] + sy
         abs_tx, abs_ty = clip["x"] + tx, clip["y"] + ty
 

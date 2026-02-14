@@ -42,7 +42,7 @@ Recommended setup flow:
 1. Install deps: `pip install -r requirements.txt` and `playwright install chromium`.
 2. Capture a fresh game-frame screenshot for calibration:
    ```bash
-   python3 calibrate_crazygames.py --out results/crazygames_frame.png
+   python3 calibrate_crazygames.py --out results/crazygames_frame.png --wait-ms 60000
    ```
 3. Update `crazygames_config.json` with accurate board/next-flower coordinates for your screen layout.
 4. Start the page and let the bot take over.
@@ -55,3 +55,5 @@ Notes:
 Troubleshooting:
 - If you see `AttributeError: 'Frame' object has no attribute 'screenshot'`, pull latest changes. The scripts now capture the iframe using `page.screenshot(clip=...)`, which is compatible with Playwright Python.
 - On Windows, if `playwright` command is not found, run `python -m playwright install chromium` instead.
+
+- If calibration cannot resolve iframe bounds (ads/overlay/frame recreation), it now saves a full-page fallback screenshot instead of crashing.
