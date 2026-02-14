@@ -59,5 +59,6 @@
       690
     ]
   ],
-  "board_warp_size": 900
+  "board_warp_size": 900,
+  "show_cell_labels": true
 }

@@ -36,6 +36,7 @@ class BotConfig:
     confirm_target_click: bool
     preview_action_ms: int
     board_warp_size: int
+    show_cell_labels: bool
     start_selectors: List[str]
 
     @staticmethod
@@ -64,6 +65,7 @@ class BotConfig:
             confirm_target_click=bool(raw.get("confirm_target_click", True)),
             preview_action_ms=int(raw.get("preview_action_ms", 5000)),
             board_warp_size=int(raw.get("board_warp_size", 900)),
+            show_cell_labels=bool(raw.get("show_cell_labels", True)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
 
@@ -177,8 +179,9 @@ class CrazyGamesBot:
                 board, coming = self._capture_state(page, clip)
                 env_like = SimpleNamespace(brd=board, coming=coming, score=0)
                 action, decision = self._decide_action(env_like)
+                self._log_detected_board(board, coming)
 
-                self._draw_board_debug(page, clip, action)
+                self._draw_board_debug(page, clip, action, board)
                 if self.config.preview_action_ms > 0:
                     page.wait_for_timeout(self.config.preview_action_ms)
 
@@ -208,6 +211,15 @@ class CrazyGamesBot:
         top = scored[:3]
         action = self.planner.choose_action(env_like)
         return action, {"action_count": len(actions), "top_candidates": [(float(score), a) for score, a in top]}
+
+    def _log_detected_board(self, board: np.ndarray, coming: List[int]) -> None:
+        flowers = []
+        for r in range(9):
+            for c in range(9):
+                val = int(board[r][c])
+                if val != EMPTY:
+                    flowers.append((r, c, val))
+        print(f"detected-coming={coming} flower-count={len(flowers)} flowers={flowers[:40]}{' ...' if len(flowers)>40 else ''}")
 
     def _log_decision(self, step: int, board: np.ndarray, coming: List[int], action: Tuple[int, int, int, int], decision: dict) -> None:
         empty = int(np.count_nonzero(board == EMPTY))
@@ -268,7 +280,7 @@ class CrazyGamesBot:
             raise RuntimeError("Failed to decode frame screenshot")
         return self.detector.detect(img)
 
-    def _draw_board_debug(self, page: Page, clip: dict, action: Tuple[int, int, int, int]) -> None:
+    def _draw_board_debug(self, page: Page, clip: dict, action: Tuple[int, int, int, int], board: np.ndarray) -> None:
         sr, sc, tr, tc = action
         mapper = self.detector.mapper
         border = [(clip["x"] + x, clip["y"] + y) for x, y in mapper.border_points_frame()]
@@ -281,8 +293,18 @@ class CrazyGamesBot:
         sx += clip["x"]; sy += clip["y"]
         tx += clip["x"]; ty += clip["y"]
 
+        labels = []
+        if self.config.show_cell_labels:
+            for r in range(9):
+                for c in range(9):
+                    val = int(board[r][c])
+                    if val == EMPTY:
+                        continue
+                    lx, ly = mapper.board_cell_center_frame(r, c)
+                    labels.append((clip["x"] + lx, clip["y"] + ly, str(val)))
+
         page.evaluate(
-            """([border,segs,sx,sy,tx,ty,duration]) => {
+            """([border,segs,sx,sy,tx,ty,labels,duration]) => {
                 const id = 'codex-board-debug';
                 const old = document.getElementById(id);
                 if (old) old.remove();
@@ -329,11 +351,22 @@ class CrazyGamesBot:
                 mk(sx,sy,'red','SRC');
                 mk(tx,ty,'yellow','DST');
 
+                for (const lab of labels) {
+                    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+                    t.setAttribute('x', lab[0] + 6);
+                    t.setAttribute('y', lab[1] - 6);
+                    t.setAttribute('fill', '#00ffff');
+                    t.setAttribute('font-size', 12);
+                    t.setAttribute('font-weight', 'bold');
+                    t.textContent = lab[2];
+                    svg.appendChild(t);
+                }
+
                 document.body.appendChild(svg);
                 setTimeout(() => { const cur = document.getElementById(id); if (cur) cur.remove(); }, duration);
             }
             """,
-            [border, segs, sx, sy, tx, ty, self.config.preview_action_ms],
+            [border, segs, sx, sy, tx, ty, labels, self.config.preview_action_ms],
         )
 
     def _play_action(self, page: Page, clip: dict, action: Tuple[int, int, int, int]) -> None:
@@ -401,6 +434,7 @@ def main() -> None:
     parser.add_argument("--drag-move-steps", type=int, default=None)
     parser.add_argument("--drag-hover-ms", type=int, default=None)
     parser.add_argument("--no-confirm-target-click", action="store_true")
+    parser.add_argument("--hide-cell-labels", action="store_true", help="hide detected flower labels on overlay")
     args = parser.parse_args()
 
     cfg = BotConfig.load(Path(args.config))
@@ -418,6 +452,8 @@ def main() -> None:
         cfg.drag_hover_ms = args.drag_hover_ms
     if args.no_confirm_target_click:
         cfg.confirm_target_click = False
+    if args.hide_cell_labels:
+        cfg.show_cell_labels = False
 
     planner_cfg = PlannerConfig(
         beam_width=args.beam_width,

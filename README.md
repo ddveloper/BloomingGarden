@@ -78,3 +78,21 @@ python3 web_bot_crazygames.py --steps 500 --wait-ms 60000 --no-confirm-target-cl
 Startup control:
 - After launching bot, it waits in terminal for: `Type y then Enter to start bot actions:`
 
+
+
+How to tune `board_quad` (lt, lb, rt, rb):
+1. Run bot with preview enabled so projected red border/grid is visible.
+2. Edit `crazygames_config.json` and move points one by one:
+   - `lt`: top-left board corner
+   - `lb`: bottom-left board corner
+   - `rt`: top-right board corner
+   - `rb`: bottom-right board corner
+3. If overlay is shifted right/left, move all x values together.
+4. If overlay is shifted up/down, move all y values together.
+5. If far edge is too wide/narrow, adjust `lt/rt` x values.
+6. If near edge is too wide/narrow, adjust `lb/rb` x values.
+7. Re-run and iterate until red projected grid lines sit on real cell seams.
+
+Debug tips:
+- Overlay now draws detected flower labels (cell value IDs) in cyan on occupied cells.
+- Terminal logs `detected-coming=...` and full detected flower list before each action.
