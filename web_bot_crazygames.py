@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +38,8 @@ class BotConfig:
     preview_action_ms: int
     board_warp_size: int
     show_cell_labels: bool
+    debug_capture_steps: int
+    debug_capture_dir: str
     start_selectors: List[str]
 
     @staticmethod
@@ -66,6 +69,8 @@ class BotConfig:
             preview_action_ms=int(raw.get("preview_action_ms", 5000)),
             board_warp_size=int(raw.get("board_warp_size", 900)),
             show_cell_labels=bool(raw.get("show_cell_labels", True)),
+            debug_capture_steps=int(raw.get("debug_capture_steps", 3)),
+            debug_capture_dir=str(raw.get("debug_capture_dir", "results/debug_steps")),
             start_selectors=list(raw.get("start_selectors", [])),
         )
 
@@ -162,32 +167,50 @@ class CrazyGamesBot:
             self._click_start_buttons(page, frame)
 
             print(
-                f"ready: steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} "
-                f"samples={self.planner.cfg.placement_samples}"
+                f"[{self._ts()}] ready: steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} "
+                f"samples={self.planner.cfg.placement_samples} preview_action_ms={self.config.preview_action_ms} "
+                f"debug_capture_steps={self.config.debug_capture_steps}"
             )
 
             self._wait_for_user_confirmation()
 
             for step in range(steps):
+                t0 = time.perf_counter()
                 clip = self._frame_clip(page, frame)
                 if clip is None:
                     frame = self._resolve_game_frame(page)
                     page.wait_for_timeout(300)
-                    print(f"step={step} waiting for stable iframe clip")
+                    print(f"[{self._ts()}] step={step} waiting for stable iframe clip")
                     continue
 
+                t_capture0 = time.perf_counter()
                 board, coming = self._capture_state(page, clip)
+                t_capture = time.perf_counter() - t_capture0
+
                 env_like = SimpleNamespace(brd=board, coming=coming, score=0)
+                t_decide0 = time.perf_counter()
                 action, decision = self._decide_action(env_like)
+                t_decide = time.perf_counter() - t_decide0
                 self._log_detected_board(board, coming)
 
+                t_overlay0 = time.perf_counter()
                 self._draw_board_debug(page, clip, action, board)
+                self._capture_debug_step(page, step)
                 if self.config.preview_action_ms > 0:
                     page.wait_for_timeout(self.config.preview_action_ms)
+                t_overlay = time.perf_counter() - t_overlay0
 
+                t_action0 = time.perf_counter()
                 self._play_action(page, clip, action)
+                t_action = time.perf_counter() - t_action0
                 self._log_decision(step, board, coming, action, decision)
                 time.sleep(self.config.think_delay_s)
+
+                t_total = time.perf_counter() - t0
+                print(
+                    f"[{self._ts()}] perf step={step} capture={t_capture:.3f}s decide={t_decide:.3f}s "
+                    f"overlay+preview={t_overlay:.3f}s action={t_action:.3f}s think={self.config.think_delay_s:.3f}s total={t_total:.3f}s"
+                )
 
             browser.close()
 
@@ -195,9 +218,22 @@ class CrazyGamesBot:
         while True:
             ans = input("Type y then Enter to start bot actions: ").strip().lower()
             if ans == "y":
-                print("received y, starting bot loop")
+                print(f"[{self._ts()}] received y, starting bot loop")
                 return
-            print("not started. please type y to start.")
+            print(f"[{self._ts()}] not started. please type y to start.")
+
+    def _ts(self) -> str:
+        return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+    def _capture_debug_step(self, page: Page, step: int) -> None:
+        if step >= self.config.debug_capture_steps:
+            return
+        out_dir = Path(self.config.debug_capture_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        path = out_dir / f"step_{step:03d}_{ts}.png"
+        page.screenshot(path=str(path), full_page=True)
+        print(f"[{self._ts()}] saved debug screenshot: {path}")
 
     def _decide_action(self, env_like) -> Tuple[Tuple[int, int, int, int], dict]:
         actions = self.planner._legal_actions(env_like.brd)
@@ -219,13 +255,13 @@ class CrazyGamesBot:
                 val = int(board[r][c])
                 if val != EMPTY:
                     flowers.append((r, c, val))
-        print(f"detected-coming={coming} flower-count={len(flowers)} flowers={flowers[:40]}{' ...' if len(flowers)>40 else ''}")
+        print(f"[{self._ts()}] detected-coming={coming} flower-count={len(flowers)} flowers={flowers[:40]}{' ...' if len(flowers)>40 else ''}")
 
     def _log_decision(self, step: int, board: np.ndarray, coming: List[int], action: Tuple[int, int, int, int], decision: dict) -> None:
         empty = int(np.count_nonzero(board == EMPTY))
         top_parts = [f"{act}:{score:.1f}" for score, act in decision.get("top_candidates", [])]
         top_txt = " | ".join(top_parts) if top_parts else "n/a"
-        print(f"step={step} empty={empty} coming={coming} actions={decision.get('action_count',0)} chosen={action} top3={top_txt}")
+        print(f"[{self._ts()}] step={step} empty={empty} coming={coming} actions={decision.get('action_count',0)} chosen={action} top3={top_txt}")
 
     def _resolve_game_frame(self, page: Page) -> Frame:
         page.wait_for_timeout(4000)
@@ -392,7 +428,7 @@ class CrazyGamesBot:
             self._visualize_click(page, abs_sx, abs_sy, "#33cc33")
             self._visualize_click(page, abs_tx, abs_ty, "#ff4444")
 
-        print(f"click-flow src=({abs_sx:.1f},{abs_sy:.1f}) -> dst=({abs_tx:.1f},{abs_ty:.1f})")
+        print(f"[{self._ts()}] click-flow src=({abs_sx:.1f},{abs_sy:.1f}) -> dst=({abs_tx:.1f},{abs_ty:.1f})")
 
     def _visualize_click(self, page: Page, x: float, y: float, color: str) -> None:
         duration = self.config.overlay_duration_ms
@@ -435,6 +471,8 @@ def main() -> None:
     parser.add_argument("--drag-hover-ms", type=int, default=None)
     parser.add_argument("--no-confirm-target-click", action="store_true")
     parser.add_argument("--hide-cell-labels", action="store_true", help="hide detected flower labels on overlay")
+    parser.add_argument("--debug-capture-steps", type=int, default=None, help="save full-page screenshots for first N steps")
+    parser.add_argument("--debug-capture-dir", type=str, default=None, help="output folder for debug screenshots")
     args = parser.parse_args()
 
     cfg = BotConfig.load(Path(args.config))
@@ -454,6 +492,10 @@ def main() -> None:
         cfg.confirm_target_click = False
     if args.hide_cell_labels:
         cfg.show_cell_labels = False
+    if args.debug_capture_steps is not None:
+        cfg.debug_capture_steps = args.debug_capture_steps
+    if args.debug_capture_dir is not None:
+        cfg.debug_capture_dir = args.debug_capture_dir
 
     planner_cfg = PlannerConfig(
         beam_width=args.beam_width,

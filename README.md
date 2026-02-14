@@ -35,7 +35,7 @@ This gives a much better starting point for reaching high scores and generating 
 You can now run a browser bot against the new host:
 
 ```bash
-python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4 --preview-action-ms 5000 --drag-move-steps 18 --drag-hover-ms 300
+python3 web_bot_crazygames.py --steps 500 --beam-width 10 --depth 2 --samples 4 --preview-action-ms 5000 --drag-move-steps 18 --drag-hover-ms 300 --debug-capture-steps 3
 ```
 
 Recommended setup flow:
@@ -57,6 +57,8 @@ Notes:
 - Before each move, bot draws board border debug lines (red) and planned source/destination markers (red/yellow) for visibility.
 - Board mapping is perspective-aware via `board_quad` (lt, lb, rt, rb) in `crazygames_config.json`; tune these 4 points to match trapezoid board corners.
 - Overlay and click targets are now projected from homography (not flat `cell_size` grid), so far-side/near-side distortion is handled.
+- Runtime prints per-step timing breakdown with timestamps (`capture`, `decide`, `overlay+preview`, `action`, `think`, `total`) to show where time is spent.
+- Bot auto-saves screenshots for first N steps (default 3) while red debug overlay is shown, for easier coordinate tuning.
 
 
 Troubleshooting:
@@ -96,3 +98,8 @@ How to tune `board_quad` (lt, lb, rt, rb):
 Debug tips:
 - Overlay now draws detected flower labels (cell value IDs) in cyan on occupied cells.
 - Terminal logs `detected-coming=...` and full detected flower list before each action.
+
+Debug screenshot options:
+```bash
+python3 web_bot_crazygames.py --debug-capture-steps 3 --debug-capture-dir results/debug_steps
+```

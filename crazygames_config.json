@@ -60,5 +60,7 @@
     ]
   ],
   "board_warp_size": 900,
-  "show_cell_labels": true
+  "show_cell_labels": true,
+  "debug_capture_steps": 3,
+  "debug_capture_dir": "results/debug_steps"
 }
