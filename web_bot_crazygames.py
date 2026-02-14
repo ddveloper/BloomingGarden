@@ -22,7 +22,7 @@ from typing import List, Tuple
 
 import cv2
 import numpy as np
-from playwright.sync_api import Frame, sync_playwright
+from playwright.sync_api import Frame, Page, sync_playwright
 
 from baseline_agent import HighScorePlanner, PlannerConfig
 
@@ -66,7 +66,6 @@ class CrazyGamesBoardDetector:
         x0, y0 = self.cfg.board_top_left
         step = self.cfg.cell_size
 
-        # sample center patch per cell
         for r in range(9):
             for c in range(9):
                 cx = x0 + c * step + step // 2
@@ -85,8 +84,7 @@ class CrazyGamesBoardDetector:
 
     def _nearest_flower(self, feat: np.ndarray) -> int:
         dists = np.linalg.norm(self.centers - feat[None, :], axis=1)
-        idx = int(np.argmin(dists))
-        return idx
+        return int(np.argmin(dists))
 
 
 class CrazyGamesBot:
@@ -106,29 +104,45 @@ class CrazyGamesBot:
             self._click_start_buttons(page, frame)
 
             for step in range(steps):
-                board, coming = self._capture_state(frame)
+                board, coming = self._capture_state(page, frame)
                 env_like = SimpleNamespace(brd=board, coming=coming, score=0)
                 action = self.planner.choose_action(env_like)
-                self._play_action(frame, action)
+                self._play_action(page, frame, action)
                 print(f"step={step} action={action}")
                 time.sleep(self.config.think_delay_s)
 
             browser.close()
 
-    def _resolve_game_frame(self, page) -> Frame:
+    def _resolve_game_frame(self, page: Page) -> Frame:
         page.wait_for_timeout(4000)
         for fr in page.frames:
             name = (fr.name or "").lower()
             url = (fr.url or "").lower()
             if "crazygames" in url and ("gameframe" in name or "game" in url):
                 return fr
-        # fallback: biggest visible frame
         candidates = [fr for fr in page.frames if fr != page.main_frame]
         if not candidates:
             raise RuntimeError("No game frame detected. Open devtools and update frame logic.")
         return candidates[-1]
 
-    def _click_start_buttons(self, page, frame: Frame) -> None:
+    def _frame_clip(self, page: Page, frame: Frame) -> dict:
+        if frame == page.main_frame:
+            vp = page.viewport_size or {"width": 1600, "height": 1000}
+            return {"x": 0, "y": 0, "width": vp["width"], "height": vp["height"]}
+
+        element = frame.frame_element()
+        box = element.bounding_box()
+        if box is None:
+            raise RuntimeError("Could not resolve iframe bounding box")
+
+        return {
+            "x": box["x"],
+            "y": box["y"],
+            "width": box["width"],
+            "height": box["height"],
+        }
+
+    def _click_start_buttons(self, page: Page, frame: Frame) -> None:
         for selector in self.config.start_selectors:
             try:
                 locator = frame.locator(selector)
@@ -146,15 +160,15 @@ class CrazyGamesBot:
             except Exception:
                 pass
 
-    def _capture_state(self, frame: Frame) -> Tuple[np.ndarray, List[int]]:
-        png = frame.screenshot(type="png")
+    def _capture_state(self, page: Page, frame: Frame) -> Tuple[np.ndarray, List[int]]:
+        clip = self._frame_clip(page, frame)
+        png = page.screenshot(type="png", clip=clip)
         img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             raise RuntimeError("Failed to decode frame screenshot")
-        board, coming = self.detector.detect(img)
-        return board, coming
+        return self.detector.detect(img)
 
-    def _play_action(self, frame: Frame, action: Tuple[int, int, int, int]) -> None:
+    def _play_action(self, page: Page, frame: Frame, action: Tuple[int, int, int, int]) -> None:
         sr, sc, tr, tc = action
         x0, y0 = self.config.board_top_left
         step = self.config.cell_size
@@ -164,9 +178,13 @@ class CrazyGamesBot:
         tx = x0 + tc * step + step // 2
         ty = y0 + tr * step + step // 2
 
-        frame.mouse.click(sx, sy)
+        clip = self._frame_clip(page, frame)
+        abs_sx, abs_sy = clip["x"] + sx, clip["y"] + sy
+        abs_tx, abs_ty = clip["x"] + tx, clip["y"] + ty
+
+        page.mouse.click(abs_sx, abs_sy)
         time.sleep(self.config.click_delay_s)
-        frame.mouse.click(tx, ty)
+        page.mouse.click(abs_tx, abs_ty)
 
 
 def main() -> None:

@@ -8,7 +8,25 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Frame, Page, sync_playwright
+
+
+def frame_clip(page: Page, frame: Frame) -> dict:
+    if frame == page.main_frame:
+        vp = page.viewport_size or {"width": 1600, "height": 1000}
+        return {"x": 0, "y": 0, "width": vp["width"], "height": vp["height"]}
+
+    element = frame.frame_element()
+    box = element.bounding_box()
+    if box is None:
+        raise RuntimeError("Could not resolve iframe bounding box for screenshot clipping")
+
+    return {
+        "x": box["x"],
+        "y": box["y"],
+        "width": box["width"],
+        "height": box["height"],
+    }
 
 
 def main() -> None:
@@ -35,7 +53,8 @@ def main() -> None:
         if frame is None:
             frame = page.main_frame
 
-        frame.screenshot(path=str(out))
+        clip = frame_clip(page, frame)
+        page.screenshot(path=str(out), clip=clip)
         print(f"saved {out}")
         browser.close()
 

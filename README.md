@@ -50,3 +50,8 @@ Recommended setup flow:
 Notes:
 - The game runs in an iframe/canvas and UI layout may change; coordinate calibration is expected.
 - The bot uses `baseline_agent.py` planner directly for decision making.
+
+
+Troubleshooting:
+- If you see `AttributeError: 'Frame' object has no attribute 'screenshot'`, pull latest changes. The scripts now capture the iframe using `page.screenshot(clip=...)`, which is compatible with Playwright Python.
+- On Windows, if `playwright` command is not found, run `python -m playwright install chromium` instead.
