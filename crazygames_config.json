@@ -36,5 +36,8 @@
   ],
   "wait_ms": 3000,
   "show_click_overlay": true,
-  "overlay_duration_ms": 450
+  "overlay_duration_ms": 450,
+  "drag_move_steps": 12,
+  "drag_hover_ms": 250,
+  "confirm_target_click": true
 }

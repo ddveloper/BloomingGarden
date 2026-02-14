@@ -40,6 +40,9 @@ class BotConfig:
     wait_ms: int
     show_click_overlay: bool
     overlay_duration_ms: int
+    drag_move_steps: int
+    drag_hover_ms: int
+    confirm_target_click: bool
     start_selectors: List[str]
 
     @staticmethod
@@ -55,6 +58,9 @@ class BotConfig:
             wait_ms=int(raw.get("wait_ms", 3000)),
             show_click_overlay=bool(raw.get("show_click_overlay", True)),
             overlay_duration_ms=int(raw.get("overlay_duration_ms", 450)),
+            drag_move_steps=int(raw.get("drag_move_steps", 12)),
+            drag_hover_ms=int(raw.get("drag_hover_ms", 250)),
+            confirm_target_click=bool(raw.get("confirm_target_click", True)),
             start_selectors=list(raw.get("start_selectors", [])),
         )
 
@@ -109,7 +115,7 @@ class CrazyGamesBot:
             frame = self._resolve_game_frame(page)
             self._click_start_buttons(page, frame)
 
-            print(f"ready: wait_ms={self.config.wait_ms} steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} samples={self.planner.cfg.placement_samples}")
+            print(f"ready: wait_ms={self.config.wait_ms} steps={steps} beam={self.planner.cfg.beam_width} depth={self.planner.cfg.lookahead_depth} samples={self.planner.cfg.placement_samples} drag_steps={self.config.drag_move_steps} hover_ms={self.config.drag_hover_ms} confirm={self.config.confirm_target_click}")
 
             for step in range(steps):
                 clip = self._frame_clip(page, frame)
@@ -223,11 +229,27 @@ class CrazyGamesBot:
         abs_sx, abs_sy = clip["x"] + sx, clip["y"] + sy
         abs_tx, abs_ty = clip["x"] + tx, clip["y"] + ty
 
+        # 3-step interaction model from game behavior:
+        # 1) click source (dig out)
+        # 2) move cursor to target so flower follows cursor
+        # 3) click target once (or twice when confirm_target_click enabled)
         self._visualize_click(page, abs_sx, abs_sy, "#33cc33")
         page.mouse.click(abs_sx, abs_sy)
         time.sleep(self.config.click_delay_s)
+
+        page.mouse.move(abs_sx, abs_sy)
+        page.mouse.move(abs_tx, abs_ty, steps=max(1, self.config.drag_move_steps))
+        if self.config.drag_hover_ms > 0:
+            page.wait_for_timeout(self.config.drag_hover_ms)
+
         self._visualize_click(page, abs_tx, abs_ty, "#ff4444")
         page.mouse.click(abs_tx, abs_ty)
+        if self.config.confirm_target_click:
+            time.sleep(self.config.click_delay_s)
+            self._visualize_click(page, abs_tx, abs_ty, "#ff8844")
+            page.mouse.click(abs_tx, abs_ty)
+
+        print(f"click-flow src=({abs_sx:.1f},{abs_sy:.1f}) -> dst=({abs_tx:.1f},{abs_ty:.1f})")
 
     def _visualize_click(self, page: Page, x: float, y: float, color: str) -> None:
         if not self.config.show_click_overlay:
@@ -268,6 +290,9 @@ def main() -> None:
     parser.add_argument("--wait-ms", type=int, default=None, help="extra wait before first capture for manual Play click")
     parser.add_argument("--hide-click-overlay", action="store_true", help="disable on-screen click highlight")
     parser.add_argument("--overlay-duration-ms", type=int, default=None, help="highlight duration for each click marker")
+    parser.add_argument("--drag-move-steps", type=int, default=None, help="mouse move interpolation steps from source to target")
+    parser.add_argument("--drag-hover-ms", type=int, default=None, help="hover time at target before planting click")
+    parser.add_argument("--no-confirm-target-click", action="store_true", help="do not perform extra confirm click at target")
     args = parser.parse_args()
 
     cfg = BotConfig.load(Path(args.config))
@@ -277,6 +302,12 @@ def main() -> None:
         cfg.show_click_overlay = False
     if args.overlay_duration_ms is not None:
         cfg.overlay_duration_ms = args.overlay_duration_ms
+    if args.drag_move_steps is not None:
+        cfg.drag_move_steps = args.drag_move_steps
+    if args.drag_hover_ms is not None:
+        cfg.drag_hover_ms = args.drag_hover_ms
+    if args.no_confirm_target_click:
+        cfg.confirm_target_click = False
     planner_cfg = PlannerConfig(
         beam_width=args.beam_width,
         lookahead_depth=args.depth,
